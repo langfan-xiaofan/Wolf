@@ -9,12 +9,12 @@ import (
 )
 
 type Room struct {
-	ID      string              `json:"id"`
-	Owner   string              `json:"owner"`
-	Players map[int]*pkg.Player `json:"players"`
-	Status  int                 `json:"status"`
-	Game    *Game               `json:"game"`
-	Addr    map[string]string   `json:"addr"`
+	ID      string           `json:"id"`
+	Owner   string           `json:"owner"`
+	Players []*pkg.Player    `json:"players"`
+	Status  int              `json:"status"`
+	Game    *Game            `json:"game"`
+	Addr    map[string]string `json:"addr"`
 }
 
 type RoomManager struct {
@@ -34,13 +34,12 @@ func (rm *RoomManager) CreateRoom(roomID string, owner *pkg.Player) *Room {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 	room := &Room{
-		ID:    roomID,
-		Owner: owner.Name,
-		Players: map[int]*pkg.Player{
-			0: owner,
-		},
-		Status: int(RoomWaiting),
+		ID:      roomID,
+		Owner:   owner.Name,
+		Players: []*pkg.Player{owner},
+		Status:  int(RoomWaiting),
 	}
+	owner.Seat = 0
 	rm.rooms[roomID] = room
 	return room
 }
@@ -63,7 +62,8 @@ func (rm *RoomManager) JoinRoom(roomID string, player *pkg.Player) error {
 	if !ok {
 		return fmt.Errorf("房间%s不存在", roomID)
 	}
-	room.Players[len(room.Players)] = player
+	player.Seat = len(room.Players)
+	room.Players = append(room.Players, player)
 	fmt.Println("房间信息", room)
 	return nil
 }
@@ -104,6 +104,21 @@ func (rm *RoomManager) GetPlayer(playerName string, roomID string) *pkg.Player {
 	}
 	for _, player := range room.Players {
 		if player.Name == playerName {
+			return player
+		}
+	}
+	return nil
+}
+
+func (rm *RoomManager) GetPlayerBySeat(roomID string, seat int) *pkg.Player {
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+	room, ok := rm.rooms[roomID]
+	if !ok {
+		return nil
+	}
+	for _, player := range room.Players {
+		if player.Seat == seat {
 			return player
 		}
 	}

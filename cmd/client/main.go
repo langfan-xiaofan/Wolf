@@ -1,299 +1,246 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
-	"github.com/gorilla/websocket"
-	"log"
+	"os"
 	"strings"
+
+	"github.com/gorilla/websocket"
 	"wolf/pkg"
+	"wolf/pkg/client"
 	"wolf/pkg/server"
 )
 
+var conn *websocket.Conn
+
 func main() {
-	conn, _, err := websocket.DefaultDialer.Dial("ws://localhost:8080/ws", nil)
+	var err error
+	conn, _, err = websocket.DefaultDialer.Dial("ws://localhost:8080/ws", nil)
 	if err != nil {
 		panic(err)
 	}
 	defer conn.Close()
+
 	// 创建玩家
-	player := new(pkg.Player)
-	fmt.Println("请输入昵称")
-	_, err = fmt.Scanln(&player.Name)
-	if err != nil {
-		return
-	}
-	msg := server.CSMessage{
+	fmt.Print("请输入昵称>")
+	name := readLine()
+	player := &pkg.Player{Name: name}
+
+	client.GlobalState.MyName = name
+
+	// 发送创建玩家消息
+	sendMsg(&server.CSMessage{
 		Type:    server.MsgCreatePlayer,
 		Player:  player,
-		Content: player.Name,
-	}
-	jsonMsg, _ := json.Marshal(msg)
-	err = conn.WriteMessage(websocket.TextMessage, jsonMsg)
-	if err != nil {
-		return
-	}
+		Content: name,
+	})
 
-	roomCh := make(chan *server.Room, 100)
-	gameStartCh := make(chan server.SCMessage, 1)
-	// 启动接收消息的goroutine
-	go receiveLoop(conn, roomCh, gameStartCh)
-	// 显示 lobby 菜单
-	showLobbyMenu(conn, player)
-	// 等待房间信息
-	gameStartMsg := waitingRoomLoop(conn, player, roomCh, gameStartCh)
-	if gameStartMsg == nil {
-		return
+	// 初始化大厅
+	client.RenderLobby()
+
+	// 事件通道：服务器消息都走这里
+	eventCh := make(chan server.SCMessage, 100)
+
+	// goroutine: 读取服务器消息
+	go wsReceiveLoop(eventCh)
+
+	// goroutine: 读取用户输入并直接发送到服务器
+	go inputLoop()
+
+	// 主循环: 只负责渲染服务器消息
+	for msg := range eventCh {
+		handleServerMessage(&msg)
 	}
-
-	handleRoleChoice(conn, player, gameStartMsg)
-
-	ShowGameMenu(conn, player)
-	select {}
 }
 
-func receiveLoop(conn *websocket.Conn, roomCh chan<- *server.Room, gameStartCh chan<- server.SCMessage) {
+func wsReceiveLoop(eventCh chan<- server.SCMessage) {
 	for {
 		_, message, err := conn.ReadMessage()
 		if err != nil {
-			log.Printf("连接断开: %v\n", err)
+			fmt.Println("连接断开:", err)
+			close(eventCh)
 			return
 		}
-
 		var msg server.SCMessage
-		err = json.Unmarshal(message, &msg)
-		if err != nil {
-			log.Println("消息解析失败:", err)
+		if err := json.Unmarshal(message, &msg); err != nil {
+			fmt.Println("消息解析失败:", err)
 			continue
 		}
-
-		switch msg.Type {
-		case server.MsgRoomInfo:
-			var room server.Room
-			err = json.Unmarshal([]byte(msg.Content), &room)
-			if err != nil {
-				log.Println("房间信息解析失败:", err)
-				continue
-			}
-			roomCh <- &room
-		case server.MsgStartGame:
-			gameStartCh <- msg
-		case server.MsgSetFirst:
-			fmt.Println(msg.Content)
-		case server.MsgChat:
-			fmt.Println(string(msg.Content))
-		default:
-			fmt.Println(string(msg.Content))
-		}
+		eventCh <- msg
 	}
 }
 
-func showLobbyMenu(conn *websocket.Conn, player *pkg.Player) {
-	fmt.Println("\033[2J\033[H")
-	fmt.Println("欢迎来到狼人杀")
-	fmt.Println("=========操作菜单如下=========")
-	fmt.Println("1.创建房间")
-	fmt.Println("2.加入房间")
-	fmt.Println("3.退出游戏")
-	fmt.Println(">请输入序号")
-	var op int
-	var msg server.CSMessage
-	_, err := fmt.Scanln(&op)
-	if err != nil {
-		return
+func inputLoop() {
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		input := strings.TrimSpace(scanner.Text())
+		if input == "" {
+			continue
+		}
+		handleUserInput(input)
 	}
-	switch op {
-	case 1:
-		msg.Type = server.MsgCreatRoom
-		msg.RoomID = player.Name
-		msg.Player = player
-		fmt.Println("创建房间的消息", msg)
-	case 2:
-		fmt.Println("请输入房间id")
-		var roomID string
-		_, err := fmt.Scanln(&roomID)
+}
+
+func handleUserInput(input string) {
+	switch client.GlobalState.Screen {
+	case client.ScreenLobby:
+		handleLobbyInput(input)
+	case client.ScreenRoom:
+		handleRoomInput(input)
+	case client.ScreenRoleChoice:
+		handleRoleChoiceInput(input)
+	case client.ScreenGame:
+		handleGameInput(input)
+	}
+}
+
+func handleLobbyInput(input string) {
+	switch input {
+	case "1":
+		sendMsg(&server.CSMessage{
+			Type:    server.MsgCreatRoom,
+			RoomID:  client.GlobalState.MyName,
+			Player:  &pkg.Player{Name: client.GlobalState.MyName},
+			Content: client.GlobalState.MyName,
+		})
+	case "2":
+		fmt.Print("请输入房间ID>")
+		roomID := readLine()
+		sendMsg(&server.CSMessage{
+			Type:   server.MsgJoinRoom,
+			RoomID: roomID,
+			Player: &pkg.Player{Name: client.GlobalState.MyName},
+			Content: MustJson(struct {
+				PlayerName string `json:"playerName"`
+				RoomID     string `json:"roomID"`
+			}{PlayerName: client.GlobalState.MyName, RoomID: roomID}),
+		})
+	case "3":
+		fmt.Println("退出游戏")
+		os.Exit(0)
+	}
+}
+
+func handleRoomInput(input string) {
+	switch input {
+	case "1":
+		// 查找自己的准备状态
+		isReady := false
+		if client.GlobalState.Room != nil {
+			for _, p := range client.GlobalState.Room.Players {
+				if p.Name == client.GlobalState.MyName {
+					isReady = p.Ready
+					break
+				}
+			}
+		}
+		msgType := server.MsgReady
+		if isReady {
+			msgType = server.MsgUnReady
+		}
+		content := struct {
+			PlayerName string `json:"playerName"`
+			RoomID     string `json:"roomID"`
+		}{PlayerName: client.GlobalState.MyName, RoomID: client.GlobalState.RoomID}
+		jsonContent, _ := json.Marshal(content)
+		sendMsg(&server.CSMessage{
+			Type:    msgType,
+			RoomID:  client.GlobalState.RoomID,
+			Player:  &pkg.Player{Name: client.GlobalState.MyName},
+			Content: string(jsonContent),
+		})
+	case "2":
+		if client.GlobalState.Room != nil && client.GlobalState.Room.Owner == client.GlobalState.MyName {
+			sendMsg(&server.CSMessage{
+				Type:    server.MsgStartGame,
+				RoomID:  client.GlobalState.RoomID,
+				Player:  &pkg.Player{Name: client.GlobalState.MyName},
+				Content: client.GlobalState.MyName,
+			})
+		} else {
+			client.GlobalState.Screen = client.ScreenLobby
+			client.RenderLobby()
+		}
+	case "3":
+		client.GlobalState.Screen = client.ScreenLobby
+		client.RenderLobby()
+	}
+}
+
+func handleRoleChoiceInput(input string) {
+	sendMsg(&server.CSMessage{
+		Type:   server.MsgSetFirst,
+		RoomID: client.GlobalState.RoomID,
+		Player: &pkg.Player{Name: client.GlobalState.MyName},
+		Content: MustJson(struct {
+			PlayerName string `json:"playerName"`
+			First      string `json:"first"`
+		}{PlayerName: client.GlobalState.MyName, First: input}),
+	})
+}
+
+func handleGameInput(input string) {
+	sendMsg(&server.CSMessage{
+		Type:    server.MsgNightAction,
+		RoomID:  client.GlobalState.RoomID,
+		Player:  &pkg.Player{Name: client.GlobalState.MyName},
+		Content: input,
+	})
+}
+
+func handleServerMessage(msg *server.SCMessage) {
+	switch msg.Type {
+	case server.MsgRoomInfo:
+		room, err := client.ParseRoomFromContent(msg.Content)
 		if err != nil {
+			fmt.Println("房间信息解析失败:", err)
 			return
 		}
-		msg.RoomID = roomID
-		msg.Type = server.MsgJoinRoom
-		msg.Player = player
-		msg.Content = fmt.Sprintf("玩家%s加入房间%s", player.Name, roomID)
-	case 3:
-		return
-	}
-	jsonStr, _ := json.Marshal(msg)
-	conn.WriteMessage(websocket.TextMessage, jsonStr)
-}
+		client.GlobalState.Room = room
+		client.GlobalState.RoomID = room.ID
+		client.GlobalState.Screen = client.ScreenRoom
+		client.RenderRoom(msg.Content)
 
-func waitingRoomLoop(conn *websocket.Conn, player *pkg.Player, roomCh <-chan *server.Room, gameStartCh <-chan server.SCMessage) *server.SCMessage {
-	myName := player.Name
-	var currentRoom *server.Room
+	case server.MsgStartGame:
+		client.GlobalState.Screen = client.ScreenGame
+		client.RenderGameStart(msg.Content)
 
-	select {
-	case currentRoom = <-roomCh:
-	case startMsg := <-gameStartCh:
-		setRolesFromContent(player, startMsg.Content)
-		return &startMsg
-	}
+	case server.MsgSetFirst:
+		client.RenderSetFirst(msg.Content)
+		client.GlobalState.Screen = client.ScreenRoleChoice
 
-	if currentRoom == nil {
-		return nil
-	}
+	case server.MsgChat:
+		client.RenderChat(msg.Content)
 
-	doneCh := make(chan struct{})
-	inputCh := make(chan int)
-	go func() {
-		for {
-			select {
-			case <-doneCh:
-				return
-			default:
-				var idx int
-				_, err := fmt.Scanln(&idx)
-				if err != nil {
-					return
-				}
-				select {
-				case inputCh <- idx:
-				case <-doneCh:
-					return
-				}
-			}
-		}
-	}()
-	defer close(doneCh)
-
-	for {
-		displayRoom(currentRoom, player)
-
-		select {
-		case room := <-roomCh:
-			currentRoom = room
-		case startMsg := <-gameStartCh:
-			if setRolesFromContent(player, startMsg.Content) {
-				fmt.Println("游戏已开始！")
-				return &startMsg
-			}
-			fmt.Println(startMsg.Content)
-		case input := <-inputCh:
-			switch input {
-			case 1:
-				mySelf, ok := currentRoom.Players[player.Seat-1]
-				if !ok {
-					continue
-				}
-				mySelf.Ready = !mySelf.Ready
-				msgType := server.MsgReady
-				if !mySelf.Ready {
-					msgType = server.MsgUnReady
-				}
-				msg := server.CSMessage{
-					Type:    msgType,
-					RoomID:  currentRoom.ID,
-					Player:  currentRoom.Players[mySelf.Seat],
-					Content: fmt.Sprintf("%d", mySelf.Seat),
-				}
-				jsonMsg, _ := json.Marshal(msg)
-				conn.WriteMessage(websocket.TextMessage, jsonMsg)
-			case 2:
-				if currentRoom.Owner == myName {
-					msg := server.CSMessage{
-						Type:    server.MsgStartGame,
-						RoomID:  currentRoom.ID,
-						Player:  currentRoom.Players[player.Seat],
-						Content: fmt.Sprintf("%d", player.Seat),
-					}
-					jsonMsg, _ := json.Marshal(msg)
-					conn.WriteMessage(websocket.TextMessage, jsonMsg)
-				}
-			case 3:
-				fmt.Println("退出房间")
-				return nil
-			}
+	default:
+		if msg.Content != "" {
+			fmt.Println(msg.Content)
 		}
 	}
 }
 
-func displayRoom(room *server.Room, player *pkg.Player) {
-	fmt.Println("\033[2J\033[H")
-	fmt.Println("=== 狼人杀 - 等待房间 ===")
-	fmt.Printf("房间ID: %s\n", room.ID)
-	fmt.Println()
-	fmt.Println("[玩家列表]")
-	for idx, player := range room.Players {
-		readyMark := "❌"
-		if player.Ready {
-			readyMark = "✅"
-		}
-		fmt.Printf("玩家%d:%s %s\n", idx+1, player.Name, readyMark)
-	}
-
-	mySelf, ok := room.Players[player.Seat]
-	if !ok {
-		return
-	}
-	if !mySelf.Ready {
-		fmt.Print("1.准备  ")
-	} else {
-		fmt.Print("1.取消准备  ")
-	}
-	if room.Owner == player.Name {
-		fmt.Print("2.开始游戏  ")
-	}
-	fmt.Println("3.退出房间")
-	fmt.Print("请输入选项>")
-}
-
-func setRolesFromContent(player *pkg.Player, content string) bool {
-	parts := strings.Split(content, "身份1")
-	if len(parts) < 2 {
-		return false
-	}
-	rest := parts[1]
-	restParts := strings.Split(rest, "身份2")
-	if len(restParts) < 2 {
-		return false
-	}
-	role1Name := strings.TrimRight(restParts[0], ",， ")
-	role2Name := strings.TrimSpace(restParts[1])
-	player.Role1 = pkg.NewRole(role1Name)
-	player.Role2 = pkg.NewRole(role2Name)
-	return true
-}
-
-func handleRoleChoice(conn *websocket.Conn, player *pkg.Player, gameStartMsg *server.SCMessage) {
-	if player.Role1 == nil || player.Role2 == nil {
-		return
-	}
-	fmt.Printf("请选择你想先使用的身份 (1.%s, 2.%s): ", player.Role1.Name, player.Role2.Name)
-	var input string
-	_, err := fmt.Scanln(&input)
+func sendMsg(msg *server.CSMessage) {
+	data, err := json.Marshal(msg)
 	if err != nil {
+		fmt.Println("消息序列化失败:", err)
 		return
 	}
-
-	response := server.CSMessage{
-		Type:    server.MsgSetFirst,
-		RoomID:  gameStartMsg.RoomID,
-		Content: input,
-		Player:  player,
-	}
-	jsonMsg, _ := json.Marshal(response)
-	conn.WriteMessage(websocket.TextMessage, jsonMsg)
-
-	// Sync local player with server: swap if user chose the second role
-	if player.Role2.Name == input {
-		player.Role1, player.Role2 = player.Role2, player.Role1
+	if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+		fmt.Println("发送消息失败:", err)
 	}
 }
 
-func ShowGameMenu(conn *websocket.Conn, player *pkg.Player) {
-	fmt.Println("\033[2J\033[H")
-	fmt.Println("=== 游戏进行中 ===")
-	if player.Role1 == nil {
-		fmt.Println("角色信息获取失败")
-		return
+func readLine() string {
+	scanner := bufio.NewScanner(os.Stdin)
+	scanner.Scan()
+	return scanner.Text()
+}
+func MustJson(obj interface{}) string {
+	jsonData, err := json.Marshal(obj)
+	if err != nil {
+		panic(err)
 	}
-	fmt.Printf("你的身份:1.%s,2.%s\n", player.Role1.Name, player.Role2.Name)
+	return string(jsonData)
 }

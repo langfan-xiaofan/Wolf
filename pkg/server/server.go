@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"fmt"
 	"math/rand"
 	"wolf/pkg"
 )
@@ -80,6 +81,7 @@ func (r *Room) StartGame() error {
 		Players: r.GetAllPlayers(),
 	}
 	for _, player := range r.Players {
+		fmt.Printf("[DEBUG] SetFirst 调用: player=%s, role1=%s, role2=%s\n", player.Name, roles_map[player.Name][0], roles_map[player.Name][1])
 		r.Game.SetFirst(player, pkg.NewRole(roles_map[player.Name][0]), pkg.NewRole(roles_map[player.Name][1]))
 	}
 	return nil

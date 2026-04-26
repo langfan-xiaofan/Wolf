@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"os"
 	"wolf/pkg"
 )
@@ -39,7 +40,6 @@ func (g *Game) NotifyPlayer(player *pkg.Player, msg SCMessage) {
 		Type:    msg.Type,
 		RoomID:  g.RoomID,
 		Content: msg.Content,
-		Player:  player,
 	}
 	err := GlobalConns.SendToPlayer(player.Name, &msga)
 	if err != nil {
@@ -132,6 +132,7 @@ func (g *Game) IsReady() bool {
 }
 
 func (g *Game) SetFirst(player *pkg.Player, role1 *pkg.Role, role2 *pkg.Role) {
+	fmt.Printf("[DEBUG] SetFirst: player=%s, sending MsgSetFirst\n", player.Name)
 	var msg SCMessage
 	msg.Type = MsgSetFirst
 	msg.RoomID = g.RoomID
