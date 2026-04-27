@@ -12,12 +12,13 @@ const (
 )
 
 type State struct {
-	Screen  ScreenType
-	RoomID  string
-	MyName  string
-	Room    *server.Room
-	Role1   string
-	Role2   string
+	Screen   ScreenType
+	RoomID   string
+	MyName   string
+	Room     *server.Room
+	Role1    string
+	Role2    string
+	GameInfo string
 }
 
 var GlobalState = &State{Screen: ScreenLobby}

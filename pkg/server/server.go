@@ -1,9 +1,11 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math/rand"
+	"time"
 	"wolf/pkg"
 )
 
@@ -29,6 +31,7 @@ const (
 	MsgLeaveGame    MsgType = "leave_game"
 	MsgRoomInfo     MsgType = "room_info"
 	MsgSetFirst     MsgType = "set_first"
+	MsgAction       MsgType = "action"
 )
 
 type CSMessage struct {
@@ -83,6 +86,24 @@ func (r *Room) StartGame() error {
 	for _, player := range r.Players {
 		fmt.Printf("[DEBUG] SetFirst 调用: player=%s, role1=%s, role2=%s\n", player.Name, roles_map[player.Name][0], roles_map[player.Name][1])
 		r.Game.SetFirst(player, pkg.NewRole(roles_map[player.Name][0]), pkg.NewRole(roles_map[player.Name][1]))
+	}
+
+	// 初始化 SetFirstReady，等待所有玩家选择身份顺序
+	r.SetFirstReady = make(map[string]bool)
+	for _, p := range r.Players {
+		r.SetFirstReady[p.Name] = false
+	}
+
+	// 等待所有玩家选择身份或超时20秒
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	r.WaitForSetFirst(ctx)
+
+	go GameFlow(r.Game)
+	select {
+	case <-r.Game.Done:
+		break
 	}
 	return nil
 }

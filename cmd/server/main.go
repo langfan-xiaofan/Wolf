@@ -180,6 +180,9 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 			server.GlobalHandler.SetFirst(data["playerName"].(string), msg.RoomID, data["first"].(string))
 		case server.MsgStartGame:
 			server.GlobalHandler.StartGame(msg.Content)
+		case server.MsgAction:
+			data, _ := server.UnmarshalContent(msg.Content)
+
 		}
 	}
 }

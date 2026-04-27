@@ -66,6 +66,7 @@ func wsReceiveLoop(eventCh chan<- server.SCMessage) {
 		var msg server.SCMessage
 		if err := json.Unmarshal(message, &msg); err != nil {
 			fmt.Println("消息解析失败:", err)
+			fmt.Println("消息内容", message)
 			continue
 		}
 		eventCh <- msg
@@ -196,6 +197,7 @@ func handleServerMessage(msg *server.SCMessage) {
 		room, err := client.ParseRoomFromContent(msg.Content)
 		if err != nil {
 			fmt.Println("房间信息解析失败:", err)
+			fmt.Println("房间信息", room)
 			return
 		}
 		client.GlobalState.Room = room
@@ -204,10 +206,18 @@ func handleServerMessage(msg *server.SCMessage) {
 		client.RenderRoom(msg.Content)
 
 	case server.MsgStartGame:
+		client.GlobalState.GameInfo = msg.Content
 		client.GlobalState.Screen = client.ScreenGame
-		client.RenderGameStart(msg.Content)
+		client.RenderGame(msg.Content)
 
 	case server.MsgSetFirst:
+		// 解析角色信息 "你的身份是:村民,乌鸦\n请选择..."
+		if msg.Player != nil && msg.Player.Role1 != nil && msg.Player.Role2 != nil {
+			if len(msg.Player.Role1.Name) > 0 && len(msg.Player.Role2.Name) > 0 {
+				client.GlobalState.Role1 = msg.Player.Role1.Name
+				client.GlobalState.Role2 = msg.Player.Role2.Name
+			}
+		}
 		client.RenderSetFirst(msg.Content)
 		client.GlobalState.Screen = client.ScreenRoleChoice
 

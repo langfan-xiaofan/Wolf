@@ -12,13 +12,14 @@ type RoleInterface interface {
 }
 
 type BaseRole struct {
-	Name       string `json:"name"`
-	IsDeath    bool   `json:"death"`
-	Actionable bool   `json:"actionable"`
-	Des        string `json:"des"`
-	IsAction   bool   `json:"is_action"`
-	IsCursed   bool   `json:"is_curse"`
-	IsFrozen   bool   `json:"is_frozen"`
+	Name        string          `json:"name"`
+	IsDeath     bool            `json:"death"`
+	Actionable  bool            `json:"actionable"`
+	Des         string          `json:"des"`
+	IsAction    bool            `json:"is_action"`
+	IsCursed    bool            `json:"is_curse"`
+	IsFrozen    bool            `json:"is_frozen"`
+	SkillStatus map[string]bool `json:"skill_status"`
 }
 
 func (b *BaseRole) Death() bool {
@@ -319,7 +320,7 @@ func (c *CrowSkill) Execute(ctx *SkillContext) {
 }
 
 func (c *CrowSkill) GetName() string {
-	return "crow"
+	return "乌鸦"
 }
 
 // NewRole 创建带技能的角色
@@ -367,13 +368,14 @@ type PlayerSkill interface {
 	Spike() string
 }
 type Player struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Role1  *Role  `json:"role1"`
-	Role2  *Role  `json:"role2"`
-	Status string `json:"status"`
-	Ready  bool   `json:"ready"`
-	Seat   int    `json:"seat"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Role1   *Role  `json:"role1"`
+	Role2   *Role  `json:"role2"`
+	Status  string `json:"status"`
+	TopRole *Role  `json:"activity"`
+	Ready   bool   `json:"ready"`
+	Seat    int    `json:"seat"`
 }
 
 //func (p *Player) Spike() string {

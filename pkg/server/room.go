@@ -1,20 +1,23 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/gorilla/websocket"
 	"sync"
+	"time"
 	"wolf/pkg"
 )
 
 type Room struct {
-	ID      string           `json:"id"`
-	Owner   string           `json:"owner"`
-	Players []*pkg.Player    `json:"players"`
-	Status  int              `json:"status"`
-	Game    *Game            `json:"game"`
-	Addr    map[string]string `json:"addr"`
+	ID            string            `json:"id"`
+	Owner         string            `json:"owner"`
+	Players       []*pkg.Player     `json:"players"`
+	Status        int               `json:"status"`
+	Game          *Game            `json:"game"`
+	Addr          map[string]string `json:"addr"`
+	SetFirstReady map[string]bool   `json:"-"`
 }
 
 type RoomManager struct {
@@ -123,4 +126,28 @@ func (rm *RoomManager) GetPlayerBySeat(roomID string, seat int) *pkg.Player {
 		}
 	}
 	return nil
+}
+
+func (r *Room) WaitForSetFirst(ctx context.Context) {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			// 超时，默认使用原顺序（role1在前）
+			return
+		case <-ticker.C:
+			// 检查所有玩家是否都完成了选择
+			allReady := true
+			for _, p := range r.Players {
+				if !r.SetFirstReady[p.Name] {
+					allReady = false
+					break
+				}
+			}
+			if allReady {
+				return
+			}
+		}
+	}
 }

@@ -99,6 +99,10 @@ func (handler *Handler) UnReady(playerName string, roomID string) {
 }
 
 func (handler *Handler) SetFirst(playerName string, roomID string, first string) {
+	room := GlobalRoomManager.GetRoom(roomID)
+	if room == nil {
+		return
+	}
 	player := GlobalRoomManager.GetPlayer(playerName, roomID)
 	if player == nil {
 		return
@@ -106,7 +110,29 @@ func (handler *Handler) SetFirst(playerName string, roomID string, first string)
 	if player.Role1.Name != first {
 		player.Role1, player.Role2 = player.Role2, player.Role1
 	}
-	fmt.Println("SetFirst:role1", player.Role1.Name, "role2", player.Role2.Name)
+	player.Activity = player.Role1
+	room.SetFirstReady[playerName] = true
+
+	// 检查所有玩家是否都完成了选择
+	allReady := true
+	for _, p := range room.Players {
+		if !room.SetFirstReady[p.Name] {
+			allReady = false
+			break
+		}
+	}
+
+	// 所有玩家都选完了，发送 MsgStartGame
+	if allReady {
+		room.Game.Phase = PhaseNight
+		GlobalEventBus.Publish(string(Night), room.Game)
+		for _, p := range room.Players {
+			room.Game.NotifyPlayer(p, SCMessage{
+				Type:    MsgStartGame,
+				Content: fmt.Sprintf("游戏开始！你的身份牌是:%s,%s", p.Role1.Name, p.Role2.Name),
+			})
+		}
+	}
 }
 
 func (handler *Handler) Leave(playerName string) {
@@ -115,12 +141,30 @@ func (handler *Handler) Leave(playerName string) {
 
 func (handler *Handler) StartGame(roomID string) {
 	room := GlobalRoomManager.GetRoom(roomID)
-	err := room.StartGame()
-	if err != nil {
+	if room == nil {
+		handler.sendError(roomID, "房间不存在")
 		return
 	}
-	// room.StartGame() 已经通过 SetFirst 发送了 MsgSetFirst
-	// 玩家选择完身份顺序后，再由游戏逻辑发送 MsgStartGame
+	err := room.StartGame()
+	if err != nil {
+		handler.sendError(roomID, err.Error())
+		return
+	}
+}
+
+func (handler *Handler) sendError(roomID string, msg string) {
+	resp := &SCMessage{
+		Type:    MsgChat,
+		RoomID:  roomID,
+		Content: msg,
+	}
+	jsonResp, _ := json.Marshal(resp)
+	for _, player := range GlobalRoomManager.GetRoom(roomID).Players {
+		conn := GlobalConns.GetConn(player.Name)
+		if conn != nil {
+			conn.WriteMessage(websocket.TextMessage, jsonResp)
+		}
+	}
 }
 
 func UnmarshalContent(content string) (map[string]interface{}, error) {

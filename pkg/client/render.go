@@ -118,4 +118,9 @@ func RenderGame(content string) {
 	fmt.Println("\033[2J\033[H]")
 	fmt.Println("=== 游戏进行中 ===")
 	fmt.Println(content)
+	// 持续显示自己的身份牌
+	if len(GlobalState.Role1) > 0 && len(GlobalState.Role2) > 0 {
+		fmt.Printf("\n你的身份牌: [%s] [%s]\n", GlobalState.Role1, GlobalState.Role2)
+	}
+	fmt.Println("\n请输入操作>")
 }
